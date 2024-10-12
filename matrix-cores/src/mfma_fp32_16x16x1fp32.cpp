@@ -41,6 +41,7 @@ constexpr int M = 16;
 constexpr int N = 16;
 constexpr int K = 16;
 constexpr int nBatch = 4;
+constexpr unsigned int compute_repetitions = 20000;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -161,7 +162,7 @@ int main() {
   HIP_CHECK(hipMemcpy(B_d, B_h.data(), B_size * sizeof(float), hipMemcpyHostToDevice));
 
   // Launch GEMM kernel
-  sgemm_16x16x16_batch<<<1, dim3(16, 4)>>>(A_d, B_d, D_d);
+  sgemm_16x16x16_batch<<<dim3(64,64,64), dim3(16, 4)>>>(A_d, B_d, D_d);
   HIP_CHECK(hipGetLastError());
 
   // Copy result back to host

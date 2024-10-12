@@ -40,6 +40,7 @@ Output:
 constexpr int M = 32;
 constexpr int N = 32;
 constexpr int K = 32;
+constexpr unsigned int compute_repetitions = 20000;
 
 constexpr int LDA = K;
 constexpr int LDB = N;

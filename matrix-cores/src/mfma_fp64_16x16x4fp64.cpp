@@ -40,6 +40,7 @@ Output:
 constexpr int M = 16;
 constexpr int N = 16;
 constexpr int K = 16;
+constexpr unsigned int compute_repetitions = 20000;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -134,7 +135,7 @@ if (!gpuArchCheck("gfx90a")) {
   HIP_CHECK(hipMemcpy(B_d, B_h.data(), B_size * sizeof(double), hipMemcpyHostToDevice));
 
   // Launch GEMM kernel
-  dgemm_16x16x16<<<1, dim3(16, 4)>>>(A_d, B_d, D_d);
+  dgemm_16x16x16<<<dim3(128,64,64), dim3(16, 4)>>>(A_d, B_d, D_d);
   HIP_CHECK(hipGetLastError());
 
   // Copy result back to host

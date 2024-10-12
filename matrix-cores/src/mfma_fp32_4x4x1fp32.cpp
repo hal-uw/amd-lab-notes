@@ -41,6 +41,7 @@ constexpr int M = 4;
 constexpr int N = 4;
 constexpr int K = 4;
 constexpr int nBatch = 16;
+constexpr unsigned int compute_repetitions = 20000;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -81,21 +82,24 @@ __global__ void sgemm_4x4x4_batch(const float *A, const float *B, float *D)
   This kernel is called with a single wavefront in dim3(4, 16) layout
   */
 
-  int a_idx = LDA * threadIdx.x + batchStrideA * threadIdx.y;
-  int b_idx = threadIdx.x + batchStrideB * threadIdx.y;
+  for(int j=0; j < compute_repetitions; ++j){
+    for(int k=0; k < compute_repetitions; ++k){
+      int a_idx = LDA * threadIdx.x + batchStrideA * threadIdx.y;
+      int b_idx = threadIdx.x + batchStrideB * threadIdx.y;
 
-  for(int i = 0; i < 4; ++i){
-    const float a = A[a_idx];
-    const float b = B[b_idx];
+        for(int i = 0; i < 4; ++i){
+          const float a = A[a_idx];
+          const float b = B[b_idx];
 
-    d = __builtin_amdgcn_mfma_f32_4x4x1f32(a, b, d, 0, 0, 0);
-    //                                     ^  ^  ^
-    //D(=C)                                |  |  C(=D)
-    //            one column from each A---|  |--- one row from each B
-    a_idx += 1;   // move one column to the right
-    b_idx += LDB; // move one row down
+          d = __builtin_amdgcn_mfma_f32_4x4x1f32(a, b, d, 0, 0, 0);
+          //                                     ^  ^  ^
+          //D(=C)                                |  |  C(=D)
+          //            one column from each A---|  |--- one row from each B
+          a_idx += 1;   // move one column to the right
+          b_idx += LDB; // move one row down
+        }
+    }
   }
-
   /*
   Matrix D is a batch of 16 4 x 4 matrices that are stored in 4 AccVGPRs as follows:
     d[0] covers row 0

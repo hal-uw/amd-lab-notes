@@ -44,6 +44,7 @@ constexpr int K = 32;
 constexpr int LDA = K;
 constexpr int LDB = N;
 constexpr int LDD = N;
+constexpr unsigned int compute_repetitions = 20000;
 
 constexpr int A_size = M * LDA;
 constexpr int B_size = K * LDB;

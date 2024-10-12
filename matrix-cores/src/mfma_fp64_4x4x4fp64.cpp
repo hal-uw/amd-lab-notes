@@ -41,6 +41,7 @@ constexpr int M = 4;
 constexpr int N = 4;
 constexpr int K = 4;
 constexpr int nBatch = 4;
+constexpr unsigned int compute_repetitions = 500;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -57,7 +58,6 @@ constexpr int D_size = batchStrideD * nBatch;
 __global__ void dgemm_4x4x4_batch(const double *A, const double *B, double *D)
 {
 
-#if __gfx90a__
   // This kernel computes a batch of four 4x4x4 matrix multiplications using a single wavefront.
   double d = {0}; // zero out 1 * 2 vanilla VGPRs
 
@@ -88,10 +88,11 @@ __global__ void dgemm_4x4x4_batch(const double *A, const double *B, double *D)
   const double a = A[a_idx];
   const double b = B[b_idx];
 
-  d = __builtin_amdgcn_mfma_f64_4x4x4f64(a, b, d, 0, 0, 0);
-  //                                     ^  ^  ^
-  //D(=C)                                |  |  C(=D)
-  //            one column from each A---|  |--- one row from each B
+  for(int i = 0; i < compute_repetitions; ++i) {
+    for(int j = 0; j < compute_repetitions; ++j) {
+      d = __builtin_amdgcn_mfma_f64_4x4x4f64(a, b, d, 0, 0, 0);
+    }
+  }
 
   /*
   Matrix D is a batch of four 4 x 4 matrices that are stored in 1 AccVGPR pair as follows:
@@ -109,7 +110,6 @@ __global__ void dgemm_4x4x4_batch(const double *A, const double *B, double *D)
                     + threadIdx.y * batchStrideD  // groups of 4 lanes cover a row of each matrix in batch
                     + threadIdx.z * LDD;          // groups of 16 lanes take consecutive rows
   D[d_idx] = d;
-#endif
 }
 
 
@@ -148,7 +148,7 @@ int main() {
   HIP_CHECK(hipMemcpy(B_d, B_h.data(), B_size * sizeof(double), hipMemcpyHostToDevice));
 
   // Launch GEMM kernel
-  dgemm_4x4x4_batch<<<1, dim3(4, 4, 4)>>>(A_d, B_d, D_d);
+  dgemm_4x4x4_batch<<<dim3(128,64,64), dim3(4, 4, 4)>>>(A_d, B_d, D_d);
   HIP_CHECK(hipGetLastError());
 
   // Copy result back to host

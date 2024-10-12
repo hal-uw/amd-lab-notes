@@ -41,6 +41,7 @@ constexpr int M = 4;
 constexpr int N = 4;
 constexpr int K = 4;
 constexpr int nBatch = 16;
+constexpr unsigned int compute_repetitions = 20000;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
