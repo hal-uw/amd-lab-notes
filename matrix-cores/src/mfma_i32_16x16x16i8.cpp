@@ -49,6 +49,9 @@ constexpr int A_size = M * LDA;
 constexpr int B_size = K * LDB;
 constexpr int D_size = M * LDD;
 
+constexpr unsigned int compute_repetitions =320;
+
+
 
 __global__ void igemm_16x16x16(const int8_t* A, const int8_t* B, int32_t* D)
 {
@@ -103,7 +106,12 @@ __global__ void igemm_16x16x16(const int8_t* A, const int8_t* B, int32_t* D)
     b[i] = B[b_idx];
   }
 
-  d = __builtin_amdgcn_mfma_i32_16x16x16i8(*reinterpret_cast<int32_t*>(a), *reinterpret_cast<int32_t*>(b), d, 0, 0, 0);
+  for (int rep_i = 0; rep_i < compute_repetitions; ++rep_i) {
+        for (int rep_j = 0; rep_j < compute_repetitions; ++rep_j) {
+		d = __builtin_amdgcn_mfma_i32_16x16x16i8(*reinterpret_cast<int32_t*>(a), *reinterpret_cast<int32_t*>(b), d, 0, 0, 0);
+        }
+    }
+
   //                                        ^  ^  ^
   //D(=C)                                   |  |  C(=D)
   //                      16 columns of A---|  |--- 16 rows of B
@@ -164,7 +172,7 @@ int main(){
   HIP_CHECK(hipMemcpy(B_d, B_h.data(), B_size * sizeof(int8_t), hipMemcpyHostToDevice));
 
   // Launch GEMM kernel
-  igemm_16x16x16<<<1, dim3(16, 4)>>>(A_d, B_d, D_d);
+  igemm_16x16x16<<<dim3(128,64,64), dim3(16, 4)>>>(A_d, B_d, D_d);
   HIP_CHECK(hipGetLastError());
 
   // Copy result back to host

@@ -40,7 +40,7 @@ Output:
 constexpr int M = 32;
 constexpr int N = 32;
 constexpr int K = 32;
-constexpr unsigned int compute_repetitions = 20000;
+constexpr unsigned int compute_repetitions = 50;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -82,10 +82,15 @@ __global__ void sgemm_32x32x32(const float* A, const float* B, float* D)
     const float a = A[a_idx];
     const float b = B[b_idx];
 
-    d = __builtin_amdgcn_mfma_f32_32x32x2f32(a, b, d, 0, 0, 0);
-    //                                       ^  ^  ^
-    //D(=C)                                  |  |  C(=D)
-    //                    two columns of A---|  |--- two rows of B
+    for (int rep_i = 0; rep_i < compute_repetitions; ++rep_i) {
+        for (int rep_j = 0; rep_j < compute_repetitions; ++rep_j) {
+            d = __builtin_amdgcn_mfma_f32_32x32x2f32(a, b, d, 0, 0, 0);
+            //                                       ^  ^  ^
+            //D(=C)                                  |  |  C(=D)
+            //              one column from each A---|  |--- one row from each B
+        }
+    }
+
     a_idx += 2;     // move two columns to the right
     b_idx += 2*LDB; // move two rows down
   }
@@ -149,7 +154,7 @@ if (!gpuArchCheck("gfx90a") && !gpuArchCheck("gfx908")) {
   HIP_CHECK(hipMemcpy(B_d, B_h.data(), B_size * sizeof(float), hipMemcpyHostToDevice));
 
   // Launch GEMM kernel
-  sgemm_32x32x32<<<1, dim3(32, 2)>>>(A_d, B_d, D_d);
+  sgemm_32x32x32<<<dim3(128,64,64), dim3(32, 2)>>>(A_d, B_d, D_d);
   HIP_CHECK(hipGetLastError());
 
   // Copy result back to host

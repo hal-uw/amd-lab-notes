@@ -40,7 +40,7 @@ Output:
 constexpr int M = 16;
 constexpr int N = 16;
 constexpr int K = 16;
-constexpr unsigned int compute_repetitions = 20000;
+constexpr unsigned int compute_repetitions = 350;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -105,7 +105,11 @@ __global__ void sgemm_16x16x16(const float16_t* A, const float16_t* B, float* D)
     b[i] = B[b_idx];
   }
 
-  d = __builtin_amdgcn_mfma_f32_16x16x16f16(a, b, d, 0, 0, 0);
+    for(int i = 0; i < compute_repetitions; ++i) {
+    	for(int j = 0; j < compute_repetitions; ++j) {
+      d = __builtin_amdgcn_mfma_f32_16x16x16f16(a, b, d, 0, 0, 0);
+    }
+  }
   //                                        ^  ^  ^
   //D(=C)                                   |  |  C(=D)
   //                      16 columns of A---|  |--- 16 rows of B
@@ -130,7 +134,6 @@ __global__ void sgemm_16x16x16(const float16_t* A, const float16_t* B, float* D)
   }
 #endif
 }
-
 
 int main(){
   if (!gpuArchCheck("gfx90a") && !gpuArchCheck("gfx908")) {

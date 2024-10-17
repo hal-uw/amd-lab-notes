@@ -41,7 +41,7 @@ constexpr int M = 4;
 constexpr int N = 4;
 constexpr int K = 4;
 constexpr int nBatch = 16;
-constexpr unsigned int compute_repetitions = 20000;
+constexpr unsigned int compute_repetitions = 17;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -82,31 +82,44 @@ __global__ void sgemm_4x4x4_batch(const float *A, const float *B, float *D)
   This kernel is called with a single wavefront in dim3(4, 16) layout
   */
 
-  for(int j=0; j < compute_repetitions; ++j){
-    for(int k=0; k < compute_repetitions; ++k){
+  for (int j = 0; j < compute_repetitions; ++j) {
+    for (int k = 0; k < compute_repetitions; ++k) {
       int a_idx = LDA * threadIdx.x + batchStrideA * threadIdx.y;
       int b_idx = threadIdx.x + batchStrideB * threadIdx.y;
 
-        for(int i = 0; i < 4; ++i){
-          const float a = A[a_idx];
-          const float b = B[b_idx];
+      // Declare variables `a` and `b` outside of the innermost loop so they are in the correct scope
+      float a, b;
 
-          d = __builtin_amdgcn_mfma_f32_4x4x1f32(a, b, d, 0, 0, 0);
-          //                                     ^  ^  ^
-          //D(=C)                                |  |  C(=D)
-          //            one column from each A---|  |--- one row from each B
-          a_idx += 1;   // move one column to the right
-          b_idx += LDB; // move one row down
+      for (int i = 0; i < 4; ++i) {
+        a = A[a_idx];  // assign values to `a` and `b`
+        b = B[b_idx];
+
+        a_idx += 1;   // move one column to the right
+        b_idx += LDB; // move one row down
+
+        // Move the matrix multiplication inside the loop
+        for (int rep_i = 0; rep_i < compute_repetitions; ++rep_i) {
+          for (int rep_j = 0; rep_j < compute_repetitions; ++rep_j) {
+            d = __builtin_amdgcn_mfma_f32_4x4x1f32(a, b, d, 0, 0, 0);
+            //                                       ^  ^  ^
+            //D(=C)                                  |  |  C(=D)
+            //              one column from each A---|  |--- one row from each B
+          }
         }
+      }
     }
   }
-  /*
+
+
+   /*
   Matrix D is a batch of 16 4 x 4 matrices that are stored in 4 AccVGPRs as follows:
     d[0] covers row 0
     d[1] covers row 1
     d[2] covers row 2
     d[3] covers row 3
   */
+
+  // Write results to output D matrix
   for (int i = 0; i < 4; ++i) {
     const int d_idx =   threadIdx.x                 // consecutive threads cover 4 consecutive columns
                       + i * LDD                     // consecutive registers take consecutive rows
@@ -115,6 +128,7 @@ __global__ void sgemm_4x4x4_batch(const float *A, const float *B, float *D)
   }
 #endif
 }
+
 
 
 int main() {
@@ -152,7 +166,7 @@ int main() {
   HIP_CHECK(hipMemcpy(B_d, B_h.data(), B_size * sizeof(float), hipMemcpyHostToDevice));
 
   // Launch GEMM kernel
-  sgemm_4x4x4_batch<<<1, dim3(4, 16)>>>(A_d, B_d, D_d);
+  sgemm_4x4x4_batch<<<dim3(128,64,64), dim3(4, 16)>>>(A_d, B_d, D_d);
   HIP_CHECK(hipGetLastError());
 
   // Copy result back to host

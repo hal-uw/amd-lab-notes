@@ -40,7 +40,7 @@ Output:
 constexpr int M = 16;
 constexpr int N = 16;
 constexpr int K = 16;
-constexpr unsigned int compute_repetitions = 20000;
+constexpr unsigned int compute_repetitions = 500;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -81,7 +81,12 @@ __global__ void dgemm_16x16x16(const double* A, const double* B, double* D)
     const double a = A[a_idx];
     const double b = B[b_idx];
 
-    d = __builtin_amdgcn_mfma_f64_16x16x4f64(a, b, d, 0, 0, 0);
+    for (int rep_i = 0; rep_i < compute_repetitions; ++rep_i) {
+        for (int rep_j = 0; rep_j < compute_repetitions; ++rep_j) {
+		d = __builtin_amdgcn_mfma_f64_16x16x4f64(a, b, d, 0, 0, 0);
+        }
+    }
+
     //                                       ^  ^  ^
     //D(=C)                                  |  |  C(=D)
     //                    two columns of A---|  |--- two rows of B

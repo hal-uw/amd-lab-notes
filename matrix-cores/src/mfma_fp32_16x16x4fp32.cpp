@@ -40,7 +40,7 @@ Output:
 constexpr int M = 16;
 constexpr int N = 16;
 constexpr int K = 16;
-constexpr unsigned int compute_repetitions = 20000;
+constexpr unsigned int compute_repetitions = 150;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -82,10 +82,15 @@ __global__ void sgemm_16x16x16(const float* A, const float* B, float* D)
     float a = A[a_idx];
     float b = B[b_idx];
 
-    d = __builtin_amdgcn_mfma_f32_16x16x4f32(a, b, d, 0, 0, 0);
-    //                                       ^  ^  ^
-    //D(=C)                                  |  |  C(=D)
-    //                   four columns of A---|  |--- four rows of B
+    for (int rep_i = 0; rep_i < compute_repetitions; ++rep_i) {
+        for (int rep_j = 0; rep_j < compute_repetitions; ++rep_j) {
+            d = __builtin_amdgcn_mfma_f32_16x16x4f32(a, b, d, 0, 0, 0);
+            //                                       ^  ^  ^
+            //D(=C)                                  |  |  C(=D)
+            //              one column from each A---|  |--- one row from each B
+        }
+    }
+	
     a_idx += 4;     // move four columns to the right
     b_idx += 4*LDB; // move four rows down
   }
@@ -145,7 +150,7 @@ int main(){
   HIP_CHECK(hipMemcpy(B_d, B_h.data(), B_size * sizeof(float), hipMemcpyHostToDevice));
 
   // Launch GEMM kernel
-  sgemm_16x16x16<<<1, dim3(16, 4)>>>(A_d, B_d, D_d);
+  sgemm_16x16x16<<<dim3(128,64,64), dim3(16, 4)>>>(A_d, B_d, D_d);
   HIP_CHECK(hipGetLastError());
 
   // Copy result back to host

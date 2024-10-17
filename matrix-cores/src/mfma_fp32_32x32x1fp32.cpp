@@ -41,7 +41,7 @@ constexpr int M = 32;
 constexpr int N = 32;
 constexpr int K = 32;
 constexpr int nBatch = 2;
-constexpr unsigned int compute_repetitions = 20000;
+constexpr unsigned int compute_repetitions = 40;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -90,10 +90,15 @@ __global__ void sgemm_32x32x32_batch(const float* A, const float* B, float* D)
     const float a = A[a_idx];
     const float b = B[b_idx];
 
-    d = __builtin_amdgcn_mfma_f32_32x32x1f32(a, b, d, 0, 0, 0);
-    //                                       ^  ^  ^
-    //D(=C)                                  |  |  C(=D)
-    //              one column from each A---|  |--- one row from each B
+    for (int rep_i = 0; rep_i < compute_repetitions; ++rep_i) {
+        for (int rep_j = 0; rep_j < compute_repetitions; ++rep_j) {
+            d = __builtin_amdgcn_mfma_f32_32x32x1f32(a, b, d, 0, 0, 0);
+            //                                       ^  ^  ^
+            //D(=C)                                  |  |  C(=D)
+            //              one column from each A---|  |--- one row from each B
+        }
+    }
+
     a_idx += 1;   // move one column to the right
     b_idx += LDB; // move one row down
   }
@@ -169,7 +174,7 @@ int main() {
   HIP_CHECK(hipMemcpy(B_d, B_h.data(), B_size * sizeof(float), hipMemcpyHostToDevice));
 
   // Launch GEMM kernel
-  sgemm_32x32x32_batch<<<1, dim3(32, 2)>>>(A_d, B_d, D_d);
+  sgemm_32x32x32_batch<<<dim3(128,64,64), dim3(32, 2)>>>(A_d, B_d, D_d);
   HIP_CHECK(hipGetLastError());
 
   // Copy result back to host
