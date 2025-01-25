@@ -41,7 +41,7 @@ constexpr int M = 16;
 constexpr int N = 16;
 constexpr int K = 16;
 constexpr int nBatch = 4;
-constexpr unsigned int compute_repetitions = 75;
+constexpr unsigned int compute_repetitions = 1;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -90,15 +90,10 @@ __global__ void sgemm_16x16x16_batch(const float *A, const float *B, float *D)
     const float a = A[a_idx];
     const float b = B[b_idx];
 
-    for (int rep_i = 0; rep_i < compute_repetitions; ++rep_i) {
-        for (int rep_j = 0; rep_j < compute_repetitions; ++rep_j) {
-            d = __builtin_amdgcn_mfma_f32_16x16x1f32(a, b, d, 0, 0, 0);
-            //                                       ^  ^  ^
-            //D(=C)                                  |  |  C(=D)
-            //              one column from each A---|  |--- one row from each B
-        }
-    }
-
+    d = __builtin_amdgcn_mfma_f32_16x16x1f32(a, b, d, 0, 0, 0);
+    //                                       ^  ^  ^
+    //D(=C)                                  |  |  C(=D)
+    //              one column from each A---|  |--- one row from each B
     a_idx += 1;   // move one column to the right
     b_idx += LDB; // move one row down
   }
@@ -166,9 +161,33 @@ int main() {
   HIP_CHECK(hipMemcpy(A_d, A_h.data(), A_size * sizeof(float), hipMemcpyHostToDevice));
   HIP_CHECK(hipMemcpy(B_d, B_h.data(), B_size * sizeof(float), hipMemcpyHostToDevice));
 
-  // Launch GEMM kernel
-  sgemm_16x16x16_batch<<<dim3(128,64,64), dim3(16, 4)>>>(A_d, B_d, D_d);
-  HIP_CHECK(hipGetLastError());
+  hipStream_t stream;
+  HIP_CHECK(hipStreamCreate(&stream));
+
+  auto overall_start = std::chrono::high_resolution_clock::now();
+  double runtime = 0.0;
+  int kernel_runs = 0;
+
+  while (runtime < 5.0) {
+    auto t1 = std::chrono::high_resolution_clock::now();
+    sgemm_16x16x16_batch<<<dim3(128,64,64), dim3(16, 4)>>>(A_d, B_d, D_d);
+    HIP_CHECK(hipGetLastError());
+    HIP_CHECK(hipDeviceSynchronize());
+    auto t2 = std::chrono::high_resolution_clock::now();
+
+    runtime += std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1).count();
+    ++kernel_runs;
+  }
+
+  auto overall_end = std::chrono::high_resolution_clock::now();
+  double overall_runtime = std::chrono::duration_cast<std::chrono::duration<double>>(overall_end - overall_start).count();
+
+  HIP_CHECK(hipStreamDestroy(stream));
+
+  // Print timing results
+  std::cout << "Kernel was executed " << kernel_runs << " times in " << runtime << " seconds.\n";
+  std::cout << "Average kernel execution time: " << (runtime / kernel_runs) << " seconds.\n";
+  std::cout << "Overall elapsed time (including loop overhead): " << overall_runtime << " seconds.\n";
 
   // Copy result back to host
   std::vector<float> D_h(D_size);
