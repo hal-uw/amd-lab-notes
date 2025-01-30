@@ -1,6 +1,5 @@
 /*
 Copyright (c) 2021-2022 Advanced Micro Devices, Inc. All rights reserved.
-...
 */
 
 #include <hip/hip_runtime.h>
@@ -11,53 +10,58 @@ Copyright (c) 2021-2022 Advanced Micro Devices, Inc. All rights reserved.
 #include "helper.hpp"
 
 // Constants
-constexpr int M = 32;
-constexpr int N = 32;
-constexpr int K = 32;
-constexpr unsigned int compute_repetitions = 1;
+constexpr int M = 4;
+constexpr int N = 4;
+constexpr int K = 4;
+constexpr int nBatch = 16;
+constexpr unsigned int compute_repetitions = 1000;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
 constexpr int LDD = N;
 
-constexpr int A_size = M * LDA;
-constexpr int B_size = K * LDB;
-constexpr int D_size = M * LDD;
+constexpr int batchStrideA = M * LDA;
+constexpr int batchStrideB = K * LDB;
+constexpr int batchStrideD = M * LDD;
 
-__global__ void sgemm_32x32x32(const float* A, const float* B, float* D) {
-#if __gfx90a__ || __gfx908__
-    using float16 = __attribute__((__vector_size__(16 * sizeof(float)))) float;
-    float16 d = {0}; // zero out 16 VGPRs
+constexpr int A_size = batchStrideA * nBatch;
+constexpr int B_size = batchStrideB * nBatch;
+constexpr int D_size = batchStrideD * nBatch;
 
-    int a_idx = LDA * threadIdx.x + threadIdx.y;
-    int b_idx = threadIdx.x + LDB * threadIdx.y;
+__global__ void sgemm_4x4x4_batch(const float* A, const float* B, float* D) {
+#if __gfx942__
+    using float4 = __attribute__((__vector_size__(4 * sizeof(float)))) float;
+    float4 d = {0}; // Zero out 4 VGPRs
 
     for (int iter = 0; iter < compute_repetitions; ++iter) {
-        for (int i = 0; i < 16; ++i) {
-            const float a = A[a_idx];
-            const float b = B[b_idx];
+        for (int k = 0; k < 4; ++k) {
+            int a_idx = LDA * threadIdx.x + batchStrideA * threadIdx.y;
+            int b_idx = threadIdx.x + batchStrideB * threadIdx.y;
 
-            d = __builtin_amdgcn_mfma_f32_32x32x2f32(a, b, d, 0, 0, 0);
-            //                                       ^  ^  ^
-            //D(=C)                                  |  |  C(=D)
-            //                    two columns of A---|  |--- two rows of B
-            a_idx += 2;     // move two columns to the right
-            b_idx += 2 * LDB; // move two rows down
+            for (int i = 0; i < 4; ++i) {
+                const float a = A[a_idx];
+                const float b = B[b_idx];
+
+                d = __builtin_amdgcn_mfma_f32_4x4x1f32(a, b, d, 0, 0, 0);
+                //                                     ^  ^  ^
+                //D(=C)                                |  |  C(=D)
+                //            one column from each A---|  |--- one row from each B
+                a_idx += 1;   // Move one column to the right
+                b_idx += LDB; // Move one row down
+            }
         }
     }
 
-    for (int j = 0; j < 4; ++j) {
-        for (int i = 0; i < 4; ++i) {
-            const int d_idx = threadIdx.x + i * LDD + threadIdx.y * 4 * LDD + j * 2 * 4 * LDD;
-            D[d_idx] = d[i + 4 * j];
-        }
+    for (int i = 0; i < 4; ++i) {
+        const int d_idx = threadIdx.x + i * LDD + threadIdx.y * batchStrideD;
+        D[d_idx] = d[i];
     }
 #endif
 }
 
 int main() {
-    if (!gpuArchCheck("gfx90a") && !gpuArchCheck("gfx908")) {
-        std::cout << "mfma_f32_32x32x2f32 instruction only available on gfx908 or later."
+    if (!gpuArchCheck("gfx942")) {
+        std::cout << "mfma_f32_4x4x1f32 instruction only available on gfx942 (MI300)."
                   << std::endl;
         exit(-1);
     }
@@ -73,7 +77,7 @@ int main() {
 
     // Calculate reference D on host
     std::vector<float> Dref_h(D_size);
-    gemm_host(A_h, B_h, Dref_h, M, N, K, LDA, LDB, LDD);
+    gemm_host_batch(A_h, B_h, Dref_h, M, N, K, nBatch, LDA, LDB, LDD, batchStrideA, batchStrideB, batchStrideD);
 
     // Make and populate device buffers
     float *A_d, *B_d, *D_d;
@@ -92,7 +96,7 @@ int main() {
 
     while (runtime < 5.0) {
         auto t1 = std::chrono::high_resolution_clock::now();
-        sgemm_32x32x32<<<dim3(128, 64, 64), dim3(32, 2)>>>(A_d, B_d, D_d);
+        sgemm_4x4x4_batch<<<dim3(128,64,64), dim3(4,16)>>>(A_d, B_d, D_d);
         HIP_CHECK(hipGetLastError());
         HIP_CHECK(hipDeviceSynchronize());
         auto t2 = std::chrono::high_resolution_clock::now();
@@ -116,7 +120,7 @@ int main() {
     HIP_CHECK(hipMemcpy(D_h.data(), D_d, D_size * sizeof(float), hipMemcpyDeviceToHost));
 
     std::cout << "Sum of squared differences of host/device result matrices: "
-              << compute_l2_error(Dref_h, D_h, M, N, LDD, LDD)
+              << compute_l2_error_batch(Dref_h, D_h, M, N, nBatch, LDD, LDD, batchStrideD, batchStrideD)
               << std::endl;
 
     HIP_CHECK(hipFree(D_d));
@@ -124,4 +128,3 @@ int main() {
     HIP_CHECK(hipFree(A_d));
     return 0;
 }
-

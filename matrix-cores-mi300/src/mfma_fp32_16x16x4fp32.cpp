@@ -1,8 +1,3 @@
-/*
-Copyright (c) 2021-2022 Advanced Micro Devices, Inc. All rights reserved.
-...
-*/
-
 #include <hip/hip_runtime.h>
 #include <iostream>
 #include <vector>
@@ -11,9 +6,9 @@ Copyright (c) 2021-2022 Advanced Micro Devices, Inc. All rights reserved.
 #include "helper.hpp"
 
 // Constants
-constexpr int M = 32;
-constexpr int N = 32;
-constexpr int K = 32;
+constexpr int M = 16;
+constexpr int N = 16;
+constexpr int K = 16;
 constexpr unsigned int compute_repetitions = 1;
 
 constexpr int LDA = K;
@@ -24,40 +19,38 @@ constexpr int A_size = M * LDA;
 constexpr int B_size = K * LDB;
 constexpr int D_size = M * LDD;
 
-__global__ void sgemm_32x32x32(const float* A, const float* B, float* D) {
+__global__ void sgemm_16x16x16(const float* A, const float* B, float* D) {
 #if __gfx90a__ || __gfx908__
-    using float16 = __attribute__((__vector_size__(16 * sizeof(float)))) float;
-    float16 d = {0}; // zero out 16 VGPRs
+    using float4 = __attribute__((__vector_size__(4 * sizeof(float)))) float;
+    float4 d = {0}; // zero out 4 VGPRs
 
     int a_idx = LDA * threadIdx.x + threadIdx.y;
     int b_idx = threadIdx.x + LDB * threadIdx.y;
 
     for (int iter = 0; iter < compute_repetitions; ++iter) {
-        for (int i = 0; i < 16; ++i) {
-            const float a = A[a_idx];
-            const float b = B[b_idx];
+        for (int i = 0; i < 4; ++i) {
+            float a = A[a_idx];
+            float b = B[b_idx];
 
-            d = __builtin_amdgcn_mfma_f32_32x32x2f32(a, b, d, 0, 0, 0);
+            d = __builtin_amdgcn_mfma_f32_16x16x4f32(a, b, d, 0, 0, 0);
             //                                       ^  ^  ^
             //D(=C)                                  |  |  C(=D)
-            //                    two columns of A---|  |--- two rows of B
-            a_idx += 2;     // move two columns to the right
-            b_idx += 2 * LDB; // move two rows down
+            //                   four columns of A---|  |--- four rows of B
+            a_idx += 4;     // move four columns to the right
+            b_idx += 4 * LDB; // move four rows down
         }
     }
 
-    for (int j = 0; j < 4; ++j) {
-        for (int i = 0; i < 4; ++i) {
-            const int d_idx = threadIdx.x + i * LDD + threadIdx.y * 4 * LDD + j * 2 * 4 * LDD;
-            D[d_idx] = d[i + 4 * j];
-        }
+    for (int i = 0; i < 4; ++i) {
+        const int d_idx = threadIdx.x + i * LDD + threadIdx.y * 4 * LDD;
+        D[d_idx] = d[i];
     }
 #endif
 }
 
 int main() {
     if (!gpuArchCheck("gfx90a") && !gpuArchCheck("gfx908")) {
-        std::cout << "mfma_f32_32x32x2f32 instruction only available on gfx908 or later."
+        std::cout << "mfma_f32_16x16x4f32 instruction only available on gfx908 or later."
                   << std::endl;
         exit(-1);
     }
@@ -67,11 +60,10 @@ int main() {
 
     // Make and populate host matrices
     std::vector<float> A_h(A_size);
-    for (auto& val : A_h) val = dist(gen);
+    for (auto &val : A_h) val = dist(gen);
     std::vector<float> B_h(B_size);
-    for (auto& val : B_h) val = dist(gen);
+    for (auto &val : B_h) val = dist(gen);
 
-    // Calculate reference D on host
     std::vector<float> Dref_h(D_size);
     gemm_host(A_h, B_h, Dref_h, M, N, K, LDA, LDB, LDD);
 
@@ -92,7 +84,7 @@ int main() {
 
     while (runtime < 5.0) {
         auto t1 = std::chrono::high_resolution_clock::now();
-        sgemm_32x32x32<<<dim3(128, 64, 64), dim3(32, 2)>>>(A_d, B_d, D_d);
+        sgemm_16x16x16<<<dim3(128, 64, 64), dim3(16,4)>>>(A_d, B_d, D_d);
         HIP_CHECK(hipGetLastError());
         HIP_CHECK(hipDeviceSynchronize());
         auto t2 = std::chrono::high_resolution_clock::now();
@@ -118,6 +110,8 @@ int main() {
     std::cout << "Sum of squared differences of host/device result matrices: "
               << compute_l2_error(Dref_h, D_h, M, N, LDD, LDD)
               << std::endl;
+
+    std::cout << "Measured runtime: " << overall_runtime << " seconds" << std::endl;
 
     HIP_CHECK(hipFree(D_d));
     HIP_CHECK(hipFree(B_d));
