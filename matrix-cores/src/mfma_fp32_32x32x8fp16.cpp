@@ -44,7 +44,7 @@ constexpr int K = 32;
 constexpr int LDA = K;
 constexpr int LDB = N;
 constexpr int LDD = N;
-constexpr unsigned int compute_repetitions = 500;
+constexpr unsigned int compute_repetitions = 10000;
 
 constexpr int A_size = M * LDA;
 constexpr int B_size = K * LDB;
@@ -54,7 +54,7 @@ constexpr int D_size = M * LDD;
 __global__ void sgemm_32x32x32(const float16_t* A, const float16_t* B, float* D)
 {
 
-#if __gfx90a__ || __gfx908__
+#if __gfx90a__ || __gfx908__ || __gfx942__
   // This kernel computes a 16x16x16 matrix multiplication using a single wavefront.
   using float16x4 = __attribute__((__vector_size__(4 * sizeof(float16_t)))) float16_t;
   using floatx16 = __attribute__((__vector_size__(16 * sizeof(float)))) float;
@@ -103,12 +103,11 @@ __global__ void sgemm_32x32x32(const float16_t* A, const float16_t* B, float* D)
     }
 
     for (int rep_i = 0; rep_i < compute_repetitions; ++rep_i) {
-        for (int rep_j = 0; rep_j < compute_repetitions; ++rep_j) {
             d = __builtin_amdgcn_mfma_f32_32x32x8f16(a, b, d, 0, 0, 0);
             //                                       ^  ^  ^
             //D(=C)                                  |  |  C(=D)
             //                 8 columns of each A---|  |--- 8 rows of each B
-        }
+  
     }
 
   }
@@ -140,7 +139,7 @@ __global__ void sgemm_32x32x32(const float16_t* A, const float16_t* B, float* D)
 
 
 int main(){
-  if (!gpuArchCheck("gfx90a") && !gpuArchCheck("gfx908")) {
+  if (!gpuArchCheck("gfx90a") && !gpuArchCheck("gfx908") && !gpuArchCheck("gfx942")) {
     std::cout << "mfma_f32_32x32x8f16 instruction only available on gfx908 or later."
               << std::endl;
     exit(-1);

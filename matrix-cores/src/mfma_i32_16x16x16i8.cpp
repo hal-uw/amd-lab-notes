@@ -49,14 +49,14 @@ constexpr int A_size = M * LDA;
 constexpr int B_size = K * LDB;
 constexpr int D_size = M * LDD;
 
-constexpr unsigned int compute_repetitions =320;
+constexpr unsigned int compute_repetitions = 10000;
 
 
 
 __global__ void igemm_16x16x16(const int8_t* A, const int8_t* B, int32_t* D)
 {
 
-#if __gfx90a__ || __gfx908__
+#if __gfx90a__ || __gfx908__ || __gfx942__
   using int32x4 = __attribute__((__vector_size__(4 * sizeof(int)))) int;
   // This kernel computes a 16x16x16 matrix multiplication using a single wavefront.
   int32x4 d = {0}; // zero out 4 vanilla VGPRs
@@ -107,9 +107,7 @@ __global__ void igemm_16x16x16(const int8_t* A, const int8_t* B, int32_t* D)
   }
 
   for (int rep_i = 0; rep_i < compute_repetitions; ++rep_i) {
-        for (int rep_j = 0; rep_j < compute_repetitions; ++rep_j) {
 		d = __builtin_amdgcn_mfma_i32_16x16x16i8(*reinterpret_cast<int32_t*>(a), *reinterpret_cast<int32_t*>(b), d, 0, 0, 0);
-        }
     }
 
   //                                        ^  ^  ^
@@ -139,7 +137,7 @@ __global__ void igemm_16x16x16(const int8_t* A, const int8_t* B, int32_t* D)
 
 
 int main(){
-  if (!gpuArchCheck("gfx90a") && !gpuArchCheck("gfx908")) {
+  if (!gpuArchCheck("gfx90a") && !gpuArchCheck("gfx908") && !gpuArchCheck("gfx942")) {
     std::cout << "mfma_f32_16x16x16f16 instruction only available on gfx908 or later."
               << std::endl;
     exit(-1);

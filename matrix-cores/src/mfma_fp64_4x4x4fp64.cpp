@@ -41,7 +41,7 @@ constexpr int M = 4;
 constexpr int N = 4;
 constexpr int K = 4;
 constexpr int nBatch = 4;
-constexpr unsigned int compute_repetitions = 500;
+constexpr unsigned int compute_repetitions = 10000;
 
 constexpr int LDA = K;
 constexpr int LDB = N;
@@ -57,7 +57,6 @@ constexpr int D_size = batchStrideD * nBatch;
 
 __global__ void dgemm_4x4x4_batch(const double *A, const double *B, double *D)
 {
-
   // This kernel computes a batch of four 4x4x4 matrix multiplications using a single wavefront.
   double d = {0}; // zero out 1 * 2 vanilla VGPRs
 
@@ -89,10 +88,8 @@ __global__ void dgemm_4x4x4_batch(const double *A, const double *B, double *D)
   const double b = B[b_idx];
 
   for(int i = 0; i < compute_repetitions; ++i) {
-    for(int j = 0; j < compute_repetitions; ++j) {
       d = __builtin_amdgcn_mfma_f64_4x4x4f64(a, b, d, 0, 0, 0);
     }
-  }
 
   /*
   Matrix D is a batch of four 4 x 4 matrices that are stored in 1 AccVGPR pair as follows:
@@ -114,7 +111,7 @@ __global__ void dgemm_4x4x4_batch(const double *A, const double *B, double *D)
 
 
 int main() {
-  if (!gpuArchCheck("gfx90a")) {
+  if (!gpuArchCheck("gfx90a") && !gpuArchCheck("gfx908") && !gpuArchCheck("gfx942")) {
     std::cout << "mfma_f64_4x4x4f64 instruction only available on gfx90a or later."
               << std::endl;
     exit(-1);
